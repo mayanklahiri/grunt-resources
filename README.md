@@ -25,9 +25,6 @@ In your project's Gruntfile, add a section named `resources` to the data object 
 ```js
 grunt.initConfig({
   resources: {
-    options: {
-      // Task-specific options go here.
-    },
     your_target: {
       // Target-specific file lists and/or options go here.
     },

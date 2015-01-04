@@ -1,20 +1,27 @@
 {
+  "html": "tmp/basic.min.html",
   "script": {
     "min": [
-      "jquery.min.js"
+      "test/fixtures/jquery.min.js"
     ],
     "raw": [
-      "app.js",
-      "controller.js"
+      "test/fixtures/app.js",
+      "test/fixtures/controller.js"
     ]
   },
   "style": {
     "min": [
-      "bootstrap.min.css"
+      "test/fixtures/bootstrap.min.css"
     ],
     "raw": [
-      "test.css",
-      "another-style.css"
+      "test/fixtures/test.css",
+      "test/fixtures/another-style.css"
     ]
+  },
+  "output": {
+    "cssSrc": "basic.min.css",
+    "cssDep": "basic.deps.min.css",
+    "jsSrc": "basic.min.js",
+    "jsDep": "basic.deps.min.js"
   }
 }

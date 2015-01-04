@@ -32,11 +32,11 @@ exports.resources = {
 
     var actual = grunt.file.read('tmp/basic.min.html');
     var expected = grunt.file.read('test/expected/basic.min.html');
-    test.equal(actual, expected, 'should describe what the default behavior is.');
+    test.equal(actual, expected, 'rewritten HTML should match.');
 
     var actualManifest = grunt.file.readJSON('tmp/manifest.json');
     var expectedManifest = grunt.file.readJSON('test/expected/basic.manifest.json');
-    test.equal(actual, expected, 'should describe what the default behavior is.');
+    test.deepEqual(actualManifest, expectedManifest, 'manifest should match.');
 
     test.done();
   },

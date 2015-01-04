@@ -13,8 +13,12 @@ var fs = require('fs'),
     htmlparser = require('htmlparser2'),
     prettyBytes = require('pretty-bytes');
 
-function extractResources(htmlStr, options) {
-  var reHead = /<head>(.|[\r\n])*<\/head>/mgi;
+function extractResources(htmlStr, root, options, grunt) {
+  // A simple regexp is used to extract the <head> section
+  // of the HTML file. This should be sufficient for well-formed
+  // HTML documents. Other sections, like <body> are left
+  // untouched.
+  var reHead = /<head.*?>(.|[\r\n])*<\/head>/mgi;
 
   // Get contents of the <head> section.
   var headSectionContents = htmlStr.match(reHead);
@@ -26,7 +30,8 @@ function extractResources(htmlStr, options) {
   }
   headSectionContents = headSectionContents[0];
 
-  // Get boundaries of the <head> section.
+  // Get byte boundaries of the <head> section so that we can
+  // easily extract it without affecting the rest of the file.
   var headSectionStart = htmlStr.search(reHead);
   var headSectionLength = headSectionContents.length;
 
@@ -44,6 +49,7 @@ function extractResources(htmlStr, options) {
     return parseResult;
   };
   var parser = new htmlparser.Parser({
+    // Only a subset of <head> children are currently supported.
     onopentag: function(name, attribs) {
       parseResult._text = null;
       if (name === 'script') {
@@ -57,7 +63,7 @@ function extractResources(htmlStr, options) {
       } else if (name === 'meta') {
         parseResult.meta.push(attribs);
       } else {
-        return parseError('Unrecognized tag in HTML head: "' + name + '"');
+        parseResult.error = 'Unsupported tag in HTML <head>: "' + name + '"';
       }
     },
     ontext: function(text) {
@@ -71,6 +77,10 @@ function extractResources(htmlStr, options) {
   });
   parser.write(headSectionContents);
   parser.end();
+
+  if (parseResult.error) {
+    return parseResult;
+  }
 
   if (!parseResult.head) {
     return parseError('No <head> tag found.');
@@ -88,8 +98,9 @@ function extractResources(htmlStr, options) {
     return '';
   }
 
-  // Analyze resources and generate new HEAD section.
+  // Analyze resources and rewrite <head> section.
   var analyzeResult = {
+    html: null,
     script: {
       min: [],
       raw: [],
@@ -117,10 +128,10 @@ function extractResources(htmlStr, options) {
     var scriptAttribs = parseResult.script[i];
 
     if (!scriptAttribs.src) {
-      return parseError('<script> without <src>: ' + scriptAttribs);
+      return parseError('Found <script> without "src" attribute; ' +
+                        'inline scripts are not currently supported.');
     }
     var scriptSrc = scriptAttribs.src;
-    // TODO: ensure source file exists.
 
     // If the "data-dev" or "dev" attribute is present, drop the script.
     if ('data-dev' in scriptAttribs || 'dev' in scriptAttribs) {
@@ -128,7 +139,9 @@ function extractResources(htmlStr, options) {
     }
 
     // If the "data-external" or "external" attribute is present, drop
-    // the attribute and pass the script into the minified html file verbatim.
+    // the "(data-)external" attribute and pass the script into the
+    // minified html file verbatim. This can be used for referencing
+    // CDN-hosted scripts.
     if ('data-external' in scriptAttribs || 'external' in scriptAttribs) {
       delete scriptAttribs['data-external'];
       delete scriptAttribs['external'];
@@ -136,11 +149,19 @@ function extractResources(htmlStr, options) {
       continue;
     }
 
+    // Check if file exists.
+    scriptSrc = path.join(root, scriptSrc);
+    if (!fs.existsSync(scriptSrc)) {
+      return parseError('Cannot find referenced file: ' + scriptSrc);
+    }
+
     // Otherwise add the script to the manifest.
     if (scriptSrc.match(/\.min\.js$/)) {
       analyzeResult.script.min.push(scriptSrc);
+      grunt.log.writeln('Adding ' + chalk.blue('minified') + ' JS to deps: ' + chalk.blue(scriptSrc));
     } else {
       analyzeResult.script.raw.push(scriptSrc);
+      grunt.log.writeln('Adding ' + chalk.green('raw') + ' JS to srcs: ' + chalk.green(scriptSrc));
     }
   }
   // If there are any minified scripts, we will have JS dependencies.
@@ -150,6 +171,7 @@ function extractResources(htmlStr, options) {
     }
     newHead += '  <script src="' + options.jsDep + '"></script>\n';
   }
+  // If there are any raw scripts, we will have JS source.
   if (analyzeResult.script.raw.length) {
     if (!options.jsSrc) {
       return parseError('Found raw JS but no jsSrc attribute in options.');
@@ -161,16 +183,23 @@ function extractResources(htmlStr, options) {
   for (i = 0; i < parseResult.link.length; i++) {
     var linkAttribs = parseResult.link[i];
     if (!linkAttribs.href) {
-      return parseError('<link> without <href>: ' + linkAttribs);
+      return parseError('Found <link> without "href" attribute.');
     }
     var linkHref = linkAttribs.href;
-    // TODO: ensure source file exists.
+
+    // Check if file exists.
+    linkHref = path.join(root, linkHref);
+    if (!fs.existsSync(linkHref)) {
+      return parseError('Cannot find referenced file: ' + linkHref);
+    }
 
     // Otherwise add the script to the manifest.
-    if (linkHref.match(/\.min\.css$/)) {
+    if (linkHref.match(/\.min\.css$/i)) {
       analyzeResult.style.min.push(linkHref);
+      grunt.log.writeln('Adding ' + chalk.blue('minified') + ' CSS to deps: ' + chalk.blue(linkHref));
     } else {
       analyzeResult.style.raw.push(linkHref);
+      grunt.log.writeln('Adding ' + chalk.green('raw') + ' CSS to srcs: ' + chalk.green(linkHref));
     }
   }
 
@@ -202,11 +231,7 @@ function extractResources(htmlStr, options) {
 module.exports = function(grunt) {
 
   grunt.registerMultiTask('resources', 'Extracts loadable resources (JS, CSS, etc) from an HTML file in preparation for minification.', function() {
-    // Merge task-specific and/or target-specific options with these defaults.
-    var options = this.options({
-      punctuation: '.',
-      separator: ', '
-    });
+    var options = this.options({});
 
     // Force task into async mode and grab a handle to the "done" function.
     var done = this.async();
@@ -228,7 +253,11 @@ module.exports = function(grunt) {
       grunt.log.writeln('Extracting resources from HTML file ' + chalk.cyan(srcFile));
 
       // Parse the HTML and extract resources.
-      var resources = extractResources(html, options);
+      var resources = extractResources(html, path.dirname(srcFile), options, grunt);
+      if (resources.error) {
+        grunt.fail.warn('Unable to extract resources from ' + chalk.cyan(srcFile) + ': ' + chalk.red(resources.error));
+        return false;
+      }
 
       // Write output files.
       if (resources.html) {
@@ -240,8 +269,15 @@ module.exports = function(grunt) {
           // Write manifest to disk
           try { fs.unlinkSync(options.manifest); } catch(e) {}
           var manifest = JSON.stringify({
+            html: f.dest,
             script: resources.script,
             style: resources.style,
+            output: {
+              cssSrc: options.cssSrc || null,
+              cssDep: options.cssDep || null,
+              jsSrc: options.jsSrc || null,
+              jsDep: options.jsDep || null
+            },
           }, undefined, 2);
           grunt.file.write(options.manifest, manifest);
           grunt.log.writeln('Wrote manifest to ' + chalk.cyan(options.manifest));
